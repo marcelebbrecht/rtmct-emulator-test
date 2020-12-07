@@ -1,0 +1,6 @@
+bin/*
+/bin/
+/tasksets/
+tasksets/*
+log/*
+/log/
