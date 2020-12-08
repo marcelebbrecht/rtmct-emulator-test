@@ -30,4 +30,4 @@ tasksets/20/taskset-2.txt
 
 ## Run emulations
 
-Please have a look at ```emulate.py``` before execution and configure as needed. Afterwards run the script to emulate the tasksets.
+Please have a look at ```emulate.py``` before execution and configure as needed. Afterwards run the script to emulate the tasksets. After the emulation is done, statistics will be created from results in the log directory per taskset size, per taskset and in summary. Just search for CSV files.
