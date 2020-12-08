@@ -51,22 +51,6 @@ for tasksetsize in os.walk("tasksets"):
                 
                 # start threading            
                 for tasksetfile in os.listdir(tasksetsize[0]):
-#                    # first overhead
-#                    for run in range(0, runs_overhead_per_set-1):
-#                        command = "perf stat ./bin/" + emulator + " 0 " + tasksetsize[0] + "/" + tasksetfile + " > log/" + tasksetsize[0].split("/")[1] + "/" + tasksetfile + "-" + emulator + "-overhead-" + str(run) + ".log 2> log/" + tasksetsize[0].split("/")[1] + "/" + tasksetfile + "-" + emulator + "-overhead-" + str(run) + ".perf"
-#                        while len(threads) >= number_of_threads: 
-#                            for i in range(0, len(threads) - 1):
-#                                if threads[i].is_alive() == False:
-#                                    threads[i].join()
-#                                    threads.pop(i)
-#                                    break
-#                            time.sleep(0.01)
-#                            
-#                        threaditem = threading.Thread(target=runSimulationThread, args=(command,))
-#                        threads.append(threaditem)
-#                        threaditem.start()
-                    
-                    # now real
                     for run in range(0, runs_emulation_per_set):
                         command = "perf stat ./bin/" + emulator + " 1 " + tasksetsize[0] + "/" + tasksetfile + " > log/" + tasksetsize[0].split("/")[1] + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log 2> log/" + tasksetsize[0].split("/")[1] + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".perf"
                         while len(threads) >= number_of_threads: 
