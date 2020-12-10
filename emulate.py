@@ -275,6 +275,9 @@ def gatherStatistics():
                         # write to intermediate file
                         with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".csv", "w") as perffiletaskset_per_emulator_run:
                             perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats)
+                        with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".dat", "w") as perffiletaskset_per_emulator_run:
+                            perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats.replace(";", " "))
+                            
 
     # now we write final data to resultfiles - per taskset   
     for tasksetsize_item in os.walk("tasksets"):   
@@ -463,16 +466,24 @@ def gatherStatistics():
         
             with open("./log/" + tasksetsize + "-full.csv", "w") as taskset_stats_full:
                 taskset_stats_full.write(tasksetstats_text_full)
+            with open("./log/" + tasksetsize + "-full.dat", "w") as taskset_stats_full:
+                taskset_stats_full.write(tasksetstats_text_full.replace(";", " "))
 
             with open("./log/" + tasksetsize + ".csv", "w") as taskset_stats:
                 taskset_stats.write(tasksetstats_text)
+            with open("./log/" + tasksetsize + ".dat", "w") as taskset_stats:
+                taskset_stats.write(tasksetstats_text.replace(";", " "))
     
     # now we write final data to resultfiles - overall
     with open("./log/summary-full.csv", "w") as perffile:
         perffile.write(taskset_overall_stats_full)
+    with open("./log/summary-full.dat", "w") as perffile:
+        perffile.write(taskset_overall_stats_full.replace(";", " "))
         
     with open("./log/summary.csv", "w") as perffile:
         perffile.write(taskset_overall_stats)
+    with open("./log/summary.dat", "w") as perffile:
+        perffile.write(taskset_overall_stats.replace(";", " "))
     
 # help text
 def printHelp():
