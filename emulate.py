@@ -8,6 +8,7 @@ import re
 import time
 import threading
 import math
+import gzip
 from statistics import geometric_mean
 from statistics import mean
 from statistics import stdev
@@ -18,7 +19,7 @@ from statistics import variance
 emulators = [["freertos_list", "freertos_boi"]]
 
 # how often should each taskset be tested
-runs_emulation_per_set = 3
+runs_emulation_per_set = 5
 
 # how many threads should be used for emulation
 number_of_threads = 10
@@ -63,7 +64,7 @@ def runEmulations():
                     # start threading            
                     for tasksetfile in os.listdir(tasksetpath):
                         for run in range(0, runs_emulation_per_set):
-                            command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log"
+                            command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " | gzip > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log.gz"
                             while len(threads) >= number_of_threads: 
                                 for i in range(0, len(threads)):
                                     if threads[i].is_alive() == False:
@@ -208,7 +209,8 @@ def gatherStatistics():
 
                                     # now get stats from file
                                     inserttimes = []
-                                    with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log", "r") as logfile:
+                                    logfilename = "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log.gz"
+                                    with gzip.open(logfilename, "rt") as logfile:
                                         for line in logfile.readlines():
                                             if "INSERTTIMER:" in line:
                                                 timeneeded = int(re.sub("\n", "", line.split(":")[1]))
@@ -239,14 +241,14 @@ def gatherStatistics():
 
                                 except:
                                     if len(successfull_runs) > 0:
-                                        print("Error processing file " + "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log, using data of run " + str(successfull_runs[-1]) + " as fallback")
+                                        print("Error processing file " + logfilename + ", using data of run " + str(successfull_runs[-1]) + " as fallback")
                                         currentrun = successfull_runs[-1]
                                     else:
                                         if currentrun < (runs_emulation_per_set-1):
-                                            print("Error processing file " + "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log, using data of run " + str(currentrun + 1) + " as fallback")
+                                            print("Error processing file " + logfilename + ", using data of run " + str(currentrun + 1) + " as fallback")
                                             currentrun += 1
                                         else:
-                                            print("Error processing file " + "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log and no alternative successfull runs available, exiting.")
+                                            print("Error processing file " + logfilename + " and no alternative successfull runs available, exiting.")
                                             sys.exit(1)
                            
                         # append geometric means of runs
