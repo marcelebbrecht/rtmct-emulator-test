@@ -73,7 +73,8 @@ def runEmulationThread(jobstotal, counter_queue, counter_queue_lock, starttime, 
     currentjob = int(counter_queue.get())
     counter_queue.put(currentjob + 1)
     timeneeded = datetime.now() - starttime
-    print("Completed " + emulator + "/" + tasksetsize + "/" + str(tasksetid) + "/" + str(run) + " (" + str(currentjob + 1) + " of " + str(jobstotal) + " - " + str(round(((currentjob + 1) / float(jobstotal)) * 100, 2)) + "% - ETA: " + str(timedelta(seconds=round(timeneeded.seconds / ((currentjob + 1) / float(jobstotal))))) + ")")        
+    eta = timedelta(seconds=round((timeneeded.seconds / ((currentjob + 1) / float(jobstotal)))-timeneeded.seconds))
+    print("Completed " + emulator + "/" + tasksetsize + "/" + str(tasksetid) + "/" + str(run) + " (" + str(currentjob + 1) + " of " + str(jobstotal) + " - " + str(round(((currentjob + 1) / float(jobstotal)) * 100, 2)) + "% - ETA: " + str(eta) + ")")        
     counter_queue_lock.release()
 
 # run emulations
@@ -286,7 +287,8 @@ def gatherThread(threadid, setstotal, counter_queue, counter_queue_lock, startti
         currentset = int(counter_queue.get())
         counter_queue.put(currentset + 1)
         timeneeded = datetime.now() - starttime
-        print("Thread " + str(threadid) + " processed " + emulator + "/" + tasksetsize + "/" + str(tasksetid) + " (" + str(currentset + 1) + " of " + str(setstotal) + " - " + str(round(((currentset + 1) / float(setstotal)) * 100, 2)) + "% - ETA: " + str(timedelta(seconds=round(timeneeded.seconds / ((currentset + 1) / float(setstotal))))) + ")")        
+        eta = timedelta(seconds=round((timeneeded.seconds / ((currentset + 1) / float(setstotal)))-timeneeded.seconds))
+        print("Thread " + str(threadid) + " processed " + emulator + "/" + tasksetsize + "/" + str(tasksetid) + " (" + str(currentset + 1) + " of " + str(setstotal) + " - " + str(round(((currentset + 1) / float(setstotal)) * 100, 2)) + "% - ETA: " + str(eta) + ")")        
         counter_queue_lock.release()
             
     queueitem = { "emulator" : str(emulator), "tasksetsize" : str(tasksetsize), "data" : emulatordatasetsizelist}
