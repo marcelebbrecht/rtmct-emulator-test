@@ -118,10 +118,12 @@ def runEmulations():
         time.sleep(0.01)    
         
 # function for single gathering thread
-def gatherThread(emulator, tasksetsize, tasksetpath, queue):
+def gatherThread(threadid, emulator, tasksetsize, tasksetpath, queue):
     # add list for specific setsize to fulldata sublist of given emulator
     emulatordatasetsizelist = { 'sizes': {}, 'ids': {}, 'inserts': {}, 'time_total': {}, 'time_perinsert_mean': {}, 'time_perinsert_min': {}, 'time_perinsert_max': {}, 'time_perinsert_stdev': {}, 'time_perinsert_err': {}  }
 
+    filenumber = 1
+    totalfiles = len(os.listdir(tasksetpath))
     for tasksetfile in os.listdir(tasksetpath):
         if stats_per_set_csv == True or stats_per_set_dat == True:
             taskset_per_emulator_run_stats = "size;id;run;inserts;time_total;time_perinsert_mean;time_perinsert_min;time_perinsert_max;time_perinsert_stdev;time_perinsert_err\n"
@@ -249,6 +251,9 @@ def gatherThread(emulator, tasksetsize, tasksetpath, queue):
         if stats_per_set_dat == True:
             with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".dat", "w") as perffiletaskset_per_emulator_run:
                 perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats.replace(";", " "))
+                
+        print("Thread " + str(threadid) + " processed " + emulator + "/" + tasksetsize + "/" + tasksetfile + " (" + str(filenumber) + " of " + str(totalfiles) + ")")        
+        filenumber += 1
             
     queueitem = { "emulator" : str(emulator), "tasksetsize" : str(tasksetsize), "data" : emulatordatasetsizelist}
     queue.put(queueitem)
@@ -325,6 +330,7 @@ def gatherStatistics():
     taskset_overall_stats += statsheader
 
     # threaded collection of all stats
+    threadid = 1
     threads = list()
     gatherqueue = queue.Queue()
     for tasksetsize_item in os.walk("tasksets"):   
@@ -334,9 +340,10 @@ def gatherStatistics():
             for emulatorclass in emulators:
                 for emulator in emulatorclass:
                     # here we do threading
-                    thread = threading.Thread(target=gatherThread, args=(emulator, tasksetsize, tasksetpath, gatherqueue,))
+                    thread = threading.Thread(target=gatherThread, args=(threadid, emulator, tasksetsize, tasksetpath, gatherqueue,))
                     thread.start()
                     threads.append(thread)
+                    threadid += 1
                     
     # here we wait for all threads to end collect data   
     while len(threads) > 0:
