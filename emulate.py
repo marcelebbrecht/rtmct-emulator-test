@@ -9,20 +9,46 @@ import time
 import threading
 import math
 import gzip
+import queue
 from statistics import geometric_mean
-from statistics import mean
 from statistics import stdev
-from statistics import variance
+
 
 ### configuration
 # which emulators should be tested, please create sublists per mechanisms
 emulators = [["freertos_list", "freertos_boi"]]
 
 # how often should each taskset be tested
-runs_emulation_per_set = 5
+runs_emulation_per_set = 10
 
 # how many threads should be used for emulation
 number_of_threads = 10
+
+# compress logs on creation / read compressed logs on stats generation
+log_compress = True
+
+# logging prefix for timer values
+log_prefix = "TIME"
+
+# create statistics per taskset
+stats_per_set_csv = False
+stats_per_set_dat = False
+
+# create statistics per taskset-size
+stats_per_size_csv = False
+stats_per_size_dat = False
+
+# create statistics per taskset-size (all available data)
+stats_per_size_csv_full = False
+stats_per_size_dat_full = False
+
+# create statistics over all tasksets and sizes
+stats_overall_csv = True
+stats_overall_dat = True
+
+# create statistics over all tasksets and sizes (all available data)
+stats_overall_csv_full = False
+stats_overall_dat_full = False
 
 ### functions
 # merge sublists 
@@ -64,7 +90,10 @@ def runEmulations():
                     # start threading            
                     for tasksetfile in os.listdir(tasksetpath):
                         for run in range(0, runs_emulation_per_set):
-                            command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " | gzip > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log.gz"
+                            if log_compress == True:
+                                command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " | gzip > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log.gz"
+                            else:
+                                command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log"
                             while len(threads) >= number_of_threads: 
                                 for i in range(0, len(threads)):
                                     if threads[i].is_alive() == False:
@@ -87,6 +116,142 @@ def runEmulations():
                 threads.pop(i)
                 break       
         time.sleep(0.01)    
+        
+# function for single gathering thread
+def gatherThread(emulator, tasksetsize, tasksetpath, queue):
+    # add list for specific setsize to fulldata sublist of given emulator
+    emulatordatasetsizelist = { 'sizes': {}, 'ids': {}, 'inserts': {}, 'time_total': {}, 'time_perinsert_mean': {}, 'time_perinsert_min': {}, 'time_perinsert_max': {}, 'time_perinsert_stdev': {}, 'time_perinsert_err': {}  }
+
+    for tasksetfile in os.listdir(tasksetpath):
+        if stats_per_set_csv == True or stats_per_set_dat == True:
+            taskset_per_emulator_run_stats = "size;id;run;inserts;time_total;time_perinsert_mean;time_perinsert_min;time_perinsert_max;time_perinsert_stdev;time_perinsert_err\n"
+
+        taskset_per_emulator_run_sizes = []
+        taskset_per_emulator_run_ids = []
+        taskset_per_emulator_run_inserts = []
+        taskset_per_emulator_run_time_total = []
+        taskset_per_emulator_run_time_perinsert = []
+        taskset_per_emulator_run_time_min = []
+        taskset_per_emulator_run_time_max = []
+        taskset_per_emulator_run_time_stdev = []
+        taskset_per_emulator_run_time_err = []
+
+        try:
+            with open(tasksetpath + "/" + tasksetfile, "r") as tf:
+                tasksetid = re.sub("\n", "", tf.readline())
+        except:
+            print("Error processing file " + tasksetpath + "/" + tasksetfile)
+            sys.exit(1)
+
+        successfull_runs = [];
+        for run in range(0, runs_emulation_per_set):
+            # save to fulldata item                                
+            currentrun = run
+            successfull = False
+            while successfull == False:
+                try:
+                    # get size
+                    if stats_per_set_csv == True or stats_per_set_dat == True:
+                        taskset_per_emulator_run_stats += str(int(tasksetsize)) + ";"
+                    taskset_per_emulator_run_sizes.append(str(int(tasksetsize)))
+                    # get id
+                    if stats_per_set_csv == True or stats_per_set_dat == True:
+                        taskset_per_emulator_run_stats += tasksetid + ";"
+                    taskset_per_emulator_run_ids.append(tasksetid)
+                    # get run
+                    if stats_per_set_csv == True or stats_per_set_dat == True:
+                        taskset_per_emulator_run_stats += str(run) + ";"
+
+                    # now get stats from file
+                    inserttimes = []
+
+                    if log_compress == True:
+                        logfilename = "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log.gz"
+                        with gzip.open(logfilename, "rt") as logfile:
+                            for line in logfile.readlines():
+                                if (log_prefix + ":") in line:
+                                    timeneeded = int(re.sub("\n", "", line.split(":")[1]))
+                                    if timeneeded < 0:
+                                        timeneeded += 1000000000
+                                    inserttimes.append(timeneeded)
+                    else:
+                        logfilename = "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log"
+                        with open(logfilename, "r") as logfile:
+                            for line in logfile.readlines():
+                                if (log_prefix + ":") in line:
+                                    timeneeded = int(re.sub("\n", "", line.split(":")[1]))
+                                    if timeneeded < 0:
+                                        timeneeded += 1000000000
+                                    inserttimes.append(timeneeded)                                        
+
+                    # write results per run to result string 
+                    if stats_per_set_csv == True or stats_per_set_dat == True:
+                        taskset_per_emulator_run_stats += str(len(inserttimes)) + ";"
+                        taskset_per_emulator_run_stats += str(sum(inserttimes)) + ";"
+                        taskset_per_emulator_run_stats += str(int(geometric_mean(inserttimes))) + ";"
+                        taskset_per_emulator_run_stats += str(min(inserttimes)) + ";"
+                        taskset_per_emulator_run_stats += str(max(inserttimes)) + ";"
+                        taskset_per_emulator_run_stats += str(int(stdev(inserttimes))) + ";"
+                        taskset_per_emulator_run_stats += str(int(stdev(inserttimes) / math.sqrt(len(inserttimes)))) + "\n"
+
+                    # write results to taskset list
+                    taskset_per_emulator_run_inserts.append(len(inserttimes));
+                    taskset_per_emulator_run_time_total.append(sum(inserttimes))
+                    taskset_per_emulator_run_time_perinsert.append(int(geometric_mean(inserttimes)))
+                    taskset_per_emulator_run_time_min.append(min(inserttimes))
+                    taskset_per_emulator_run_time_max.append(max(inserttimes))
+                    taskset_per_emulator_run_time_stdev.append(int(stdev(inserttimes)))
+                    taskset_per_emulator_run_time_err.append(int(stdev(inserttimes) / math.sqrt(len(inserttimes))))
+
+                    successfull = True
+                    successfull_runs.append(run)
+
+                except:
+                    if len(successfull_runs) > 0:
+                        print("Error processing file " + logfilename + ", using data of run " + str(successfull_runs[-1]) + " as fallback")
+                        currentrun = successfull_runs[-1]
+                    else:
+                        if currentrun < (runs_emulation_per_set-1):
+                            print("Error processing file " + logfilename + ", using data of run " + str(currentrun + 1) + " as fallback")
+                            currentrun += 1
+                        else:
+                            print("Error processing file " + logfilename + " and no alternative successfull runs available, exiting.")
+                            sys.exit(1)
+
+        # append geometric means of runs
+        if stats_per_set_csv == True or stats_per_set_dat == True:
+            taskset_per_emulator_run_stats += str(int(taskset_per_emulator_run_sizes[0])) + ";"
+            taskset_per_emulator_run_stats += str(taskset_per_emulator_run_ids[0]) + ";"
+            taskset_per_emulator_run_stats += "mean;"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_inserts))) + ";"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_total))) + ";"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_perinsert))) + ";"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_min))) + ";"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_max))) + ";"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_stdev))) + ";"
+            taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_err))) + "\n"   
+
+        # save to fulldata item
+        emulatordatasetsizelist['sizes'][int(tasksetid)] = taskset_per_emulator_run_sizes
+        emulatordatasetsizelist['ids'][int(tasksetid)] = taskset_per_emulator_run_ids
+        emulatordatasetsizelist['inserts'][int(tasksetid)] = taskset_per_emulator_run_inserts
+        emulatordatasetsizelist['time_total'][int(tasksetid)] = taskset_per_emulator_run_time_total
+        emulatordatasetsizelist['time_perinsert_mean'][int(tasksetid)] = taskset_per_emulator_run_time_perinsert
+        emulatordatasetsizelist['time_perinsert_min'][int(tasksetid)] = taskset_per_emulator_run_time_min
+        emulatordatasetsizelist['time_perinsert_max'][int(tasksetid)] = taskset_per_emulator_run_time_max
+        emulatordatasetsizelist['time_perinsert_stdev'][int(tasksetid)] = taskset_per_emulator_run_time_stdev
+        emulatordatasetsizelist['time_perinsert_err'][int(tasksetid)] = taskset_per_emulator_run_time_err
+
+        # write to intermediate file
+        if stats_per_set_csv == True:
+            with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".csv", "w") as perffiletaskset_per_emulator_run:
+                perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats)
+        if stats_per_set_dat == True:
+            with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".dat", "w") as perffiletaskset_per_emulator_run:
+                perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats.replace(";", " "))
+            
+    queueitem = { "emulator" : str(emulator), "tasksetsize" : str(tasksetsize), "data" : emulatordatasetsizelist}
+    queue.put(queueitem)
 
 # gather statistics
 def gatherStatistics():
@@ -148,6 +313,7 @@ def gatherStatistics():
             emulatordata = {}
             fulldata[str(emulator)] = emulatordata
     
+    
     # replace last ";" with "\n"
     statsheader_full = statsheader_full[:-1] + "\n"
     statsheader = statsheader[:-1] + "\n"
@@ -158,128 +324,33 @@ def gatherStatistics():
     taskset_overall_stats_full += statsheader_full
     taskset_overall_stats += statsheader
 
+    # threaded collection of all stats
+    threads = list()
+    gatherqueue = queue.Queue()
     for tasksetsize_item in os.walk("tasksets"):   
         tasksetpath = tasksetsize_item[0]             
         if(tasksetpath != "tasksets"):
             tasksetsize = tasksetpath.split("/")[1]
             for emulatorclass in emulators:
                 for emulator in emulatorclass:
-                    # add list for specific setsize to fulldata sublist of given emulator
-                    emulatordatasetsizelist = { 'sizes': {}, 'ids': {}, 'inserts': {}, 'time_total': {}, 'time_perinsert_mean': {}, 'time_perinsert_min': {}, 'time_perinsert_max': {}, 'time_perinsert_stdev': {}, 'time_perinsert_err': {}  }
-                    fulldata[str(emulator)][str(tasksetsize)] = emulatordatasetsizelist
+                    # here we do threading
+                    thread = threading.Thread(target=gatherThread, args=(emulator, tasksetsize, tasksetpath, gatherqueue,))
+                    thread.start()
+                    threads.append(thread)
                     
-                    # prepare header of statsfile
-                    taskset_per_emulator_stats = "size;id;inserts;time_total;time_perinsert_mean;time_perinsert_min;time_perinsert_max;time_perinsert_stdev;time_perinsert_err\n"
+    # here we wait for all threads to end collect data   
+    while len(threads) > 0:
+        for i in range(0, len(threads)):
+            if threads[i].is_alive() == False:
+                threads[i].join()
+                threads.pop(i)
+                break       
+        time.sleep(0.01)       
 
-                    for tasksetfile in os.listdir(tasksetpath):
-                        taskset_per_emulator_run_stats = "size;id;run;inserts;time_total;time_perinsert_mean;time_perinsert_min;time_perinsert_max;time_perinsert_stdev;time_perinsert_err\n"
-
-                        taskset_per_emulator_run_sizes = []
-                        taskset_per_emulator_run_ids = []
-                        taskset_per_emulator_run_inserts = []
-                        taskset_per_emulator_run_time_total = []
-                        taskset_per_emulator_run_time_perinsert = []
-                        taskset_per_emulator_run_time_min = []
-                        taskset_per_emulator_run_time_max = []
-                        taskset_per_emulator_run_time_stdev = []
-                        taskset_per_emulator_run_time_err = []
-                    
-                        try:
-                            with open(tasksetpath + "/" + tasksetfile, "r") as tf:
-                                tasksetid = re.sub("\n", "", tf.readline())
-                        except:
-                            print("Error processing file " + tasksetpath + "/" + tasksetfile)
-                            sys.exit(1)
-                            
-                        successfull_runs = [];
-                        for run in range(0, runs_emulation_per_set):
-                            # save to fulldata item                                
-                            currentrun = run
-                            successfull = False
-                            while successfull == False:
-                                try:
-                                    # get size
-                                    taskset_per_emulator_run_stats += str(int(tasksetsize)) + ";"
-                                    taskset_per_emulator_run_sizes.append(str(int(tasksetsize)))
-                                    # get id
-                                    taskset_per_emulator_run_stats += tasksetid + ";"
-                                    taskset_per_emulator_run_ids.append(tasksetid)
-                                    # get run
-                                    taskset_per_emulator_run_stats += str(run) + ";"
-
-                                    # now get stats from file
-                                    inserttimes = []
-                                    logfilename = "./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(currentrun) + ".log.gz"
-                                    with gzip.open(logfilename, "rt") as logfile:
-                                        for line in logfile.readlines():
-                                            if "INSERTTIMER:" in line:
-                                                timeneeded = int(re.sub("\n", "", line.split(":")[1]))
-                                                if timeneeded < 0:
-                                                    timeneeded += 1000000000
-                                                inserttimes.append(timeneeded)
-
-                                    # write results per run to result string 
-                                    taskset_per_emulator_run_stats += str(len(inserttimes)) + ";"
-                                    taskset_per_emulator_run_stats += str(sum(inserttimes)) + ";"
-                                    taskset_per_emulator_run_stats += str(int(geometric_mean(inserttimes))) + ";"
-                                    taskset_per_emulator_run_stats += str(min(inserttimes)) + ";"
-                                    taskset_per_emulator_run_stats += str(max(inserttimes)) + ";"
-                                    taskset_per_emulator_run_stats += str(int(stdev(inserttimes))) + ";"
-                                    taskset_per_emulator_run_stats += str(int(stdev(inserttimes) / math.sqrt(len(inserttimes)))) + "\n"
-
-                                    # write results to taskset list
-                                    taskset_per_emulator_run_inserts.append(len(inserttimes));
-                                    taskset_per_emulator_run_time_total.append(sum(inserttimes))
-                                    taskset_per_emulator_run_time_perinsert.append(int(geometric_mean(inserttimes)))
-                                    taskset_per_emulator_run_time_min.append(min(inserttimes))
-                                    taskset_per_emulator_run_time_max.append(max(inserttimes))
-                                    taskset_per_emulator_run_time_stdev.append(int(stdev(inserttimes)))
-                                    taskset_per_emulator_run_time_err.append(int(stdev(inserttimes) / math.sqrt(len(inserttimes))))
-
-                                    successfull = True
-                                    successfull_runs.append(run)
-
-                                except:
-                                    if len(successfull_runs) > 0:
-                                        print("Error processing file " + logfilename + ", using data of run " + str(successfull_runs[-1]) + " as fallback")
-                                        currentrun = successfull_runs[-1]
-                                    else:
-                                        if currentrun < (runs_emulation_per_set-1):
-                                            print("Error processing file " + logfilename + ", using data of run " + str(currentrun + 1) + " as fallback")
-                                            currentrun += 1
-                                        else:
-                                            print("Error processing file " + logfilename + " and no alternative successfull runs available, exiting.")
-                                            sys.exit(1)
-                           
-                        # append geometric means of runs
-                        taskset_per_emulator_run_stats += str(int(taskset_per_emulator_run_sizes[0])) + ";"
-                        taskset_per_emulator_run_stats += str(taskset_per_emulator_run_ids[0]) + ";"
-                        taskset_per_emulator_run_stats += "mean;"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_inserts))) + ";"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_total))) + ";"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_perinsert))) + ";"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_min))) + ";"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_max))) + ";"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_stdev))) + ";"
-                        taskset_per_emulator_run_stats += str(int(geometric_mean(taskset_per_emulator_run_time_err))) + "\n"   
-                        
-                        # save to fulldata item
-                        fulldata[str(emulator)][str(tasksetsize)]['sizes'][int(tasksetid)] = taskset_per_emulator_run_sizes
-                        fulldata[str(emulator)][str(tasksetsize)]['ids'][int(tasksetid)] = taskset_per_emulator_run_ids
-                        fulldata[str(emulator)][str(tasksetsize)]['inserts'][int(tasksetid)] = taskset_per_emulator_run_inserts
-                        fulldata[str(emulator)][str(tasksetsize)]['time_total'][int(tasksetid)] = taskset_per_emulator_run_time_total
-                        fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][int(tasksetid)] = taskset_per_emulator_run_time_perinsert
-                        fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][int(tasksetid)] = taskset_per_emulator_run_time_min
-                        fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][int(tasksetid)] = taskset_per_emulator_run_time_max
-                        fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][int(tasksetid)] = taskset_per_emulator_run_time_stdev
-                        fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][int(tasksetid)] = taskset_per_emulator_run_time_err
-                        
-                        # write to intermediate file
-                        with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".csv", "w") as perffiletaskset_per_emulator_run:
-                            perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats)
-                        with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".dat", "w") as perffiletaskset_per_emulator_run:
-                            perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats.replace(";", " "))
-                            
+    # move data from queue to full data dict
+    while (gatherqueue.qsize() > 0):
+        queueitem = gatherqueue.get()
+        fulldata[queueitem["emulator"]][str(queueitem["tasksetsize"])] = queueitem["data"]
 
     # now we write final data to resultfiles - per taskset   
     for tasksetsize_item in os.walk("tasksets"):   
@@ -295,60 +366,68 @@ def gatherStatistics():
                     for emulator in emulatorclass:
                         if first_emulator == True:
                             first_emulator = False
-                            tasksetstats_text_full += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                        
-                            tasksetstats_text_full += str(fulldata[str(emulator)][str(tasksetsize)]['ids'][i][0]) + ";"
-                            tasksetstats_text += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                        
-                            tasksetstats_text += str(fulldata[str(emulator)][str(tasksetsize)]['ids'][i][0]) + ";"
+                            if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                                tasksetstats_text_full += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                        
+                                tasksetstats_text_full += str(fulldata[str(emulator)][str(tasksetsize)]['ids'][i][0]) + ";"
+                            if stats_per_size_csv == True or stats_per_size_dat == True:    
+                                tasksetstats_text += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                        
+                                tasksetstats_text += str(fulldata[str(emulator)][str(tasksetsize)]['ids'][i][0]) + ";"
                         
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+                        if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
+
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
+
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
+
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
+
+                            tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
+                            tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
+                            tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
+                            tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
                         
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+                        if stats_per_size_csv == True or stats_per_size_dat == True:
+                            tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
+                            tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
+                            tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
+                            tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
                         
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
-                        
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'][i]))) + ";"
-                        
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'][i]))) + ";"
-                        
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
-                        
-                        tasksetstats_text_full += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
-                        tasksetstats_text_full += str(round(min(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
-                        tasksetstats_text_full += str(round(max(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
-                        tasksetstats_text_full += str(round(stdev(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]) / len(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'][i]))) + ";"
-                        
-                        tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['inserts'][i]))) + ";"
-                        tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_total'][i]))) + ";"
-                        tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'][i]))) + ";"
-                        tasksetstats_text += str(round(geometric_mean(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'][i]))) + ";"
-                        
-                tasksetstats_text_full = tasksetstats_text_full[:-1] + "\n"
-                tasksetstats_text = tasksetstats_text[:-1] + "\n"
+                if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                    tasksetstats_text_full = tasksetstats_text_full[:-1] + "\n"
+                    
+                if stats_per_size_csv == True or stats_per_size_dat == True:    
+                    tasksetstats_text = tasksetstats_text[:-1] + "\n"
+                
                 
             # append means per taskset-size
             first_emulator = True
@@ -356,136 +435,159 @@ def gatherStatistics():
                 for emulator in emulatorclass:
                     if first_emulator == True:
                         first_emulator = False
-                        tasksetstats_text_full += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                           
-                        tasksetstats_text_full += "mean" + ";"       
-                        tasksetstats_text += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                           
-                        tasksetstats_text += "mean" + ";"
+                        if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                            tasksetstats_text_full += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                           
+                            tasksetstats_text_full += "mean" + ";"       
+                        if stats_per_size_csv == True or stats_per_size_dat == True:    
+                            tasksetstats_text += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"                           
+                            tasksetstats_text += "mean" + ";"
                                         
-                        taskset_overall_stats_full += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"             
-                        taskset_overall_stats_full += str(len(fulldata[str(emulators[0][0])][str(tasksetsize)]['sizes'])) + ";"                   
-                        taskset_overall_stats += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"  
-                        taskset_overall_stats += str(len(fulldata[str(emulators[0][0])][str(tasksetsize)]['sizes'])) + ";"      
+                        if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                            taskset_overall_stats_full += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"             
+                            taskset_overall_stats_full += str(len(fulldata[str(emulators[0][0])][str(tasksetsize)]['sizes'])) + ";"                   
+                            
+                        if stats_per_size_csv == True or stats_per_size_dat == True:
+                            taskset_overall_stats += str(fulldata[str(emulator)][str(tasksetsize)]['sizes'][i][0]) + ";"  
+                            taskset_overall_stats += str(len(fulldata[str(emulators[0][0])][str(tasksetsize)]['sizes'])) + ";"      
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                    if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
 
-                    tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        tasksetstats_text_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        tasksetstats_text_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        tasksetstats_text_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        tasksetstats_text_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
 
-                    tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                    if stats_per_size_csv == True or stats_per_size_dat == True:
+                        tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        tasksetstats_text += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                    if stats_overall_csv_full == True or stats_overall_dat_full == True:
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_min'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_max'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
 
-                    taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
-                    taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        taskset_overall_stats_full += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        taskset_overall_stats_full += str(round(min(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        taskset_overall_stats_full += str(round(max(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
+                        taskset_overall_stats_full += str(round(stdev(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])) / len(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_err'])))) + ";"
 
-                    taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
-                    taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
-                    taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
-                    taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
+                    if stats_overall_csv == True or stats_overall_dat == True:
+                        taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['inserts'])))) + ";"
+                        taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_total'])))) + ";"
+                        taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_mean'])))) + ";"
+                        taskset_overall_stats += str(round(geometric_mean(mergeSublists(fulldata[str(emulator)][str(tasksetsize)]['time_perinsert_stdev'])))) + ";"
 
-            tasksetstats_text_full = tasksetstats_text_full[:-1] + "\n"
-            tasksetstats_text = tasksetstats_text[:-1] + "\n"
+            if stats_per_size_csv_full == True or stats_per_size_dat_full == True:
+                tasksetstats_text_full = tasksetstats_text_full[:-1] + "\n"
+                if stats_per_size_csv_full == True:
+                    with open("./log/" + tasksetsize + "-full.csv", "w") as taskset_stats_full:
+                        taskset_stats_full.write(tasksetstats_text_full)
+                if stats_per_size_dat_full == True:
+                    with open("./log/" + tasksetsize + "-full.dat", "w") as taskset_stats_full:
+                        taskset_stats_full.write(tasksetstats_text_full.replace(";", " "))
+                
+            if stats_per_size_csv == True or stats_per_size_dat == True:
+                tasksetstats_text = tasksetstats_text[:-1] + "\n"
+                if stats_per_size_csv == True:
+                    with open("./log/" + tasksetsize + ".csv", "w") as taskset_stats:
+                        taskset_stats.write(tasksetstats_text)
+                if stats_per_size_dat == True:
+                    with open("./log/" + tasksetsize + ".dat", "w") as taskset_stats:
+                        taskset_stats.write(tasksetstats_text.replace(";", " "))
 
-            taskset_overall_stats_full = taskset_overall_stats_full[:-1] + "\n"
-            taskset_overall_stats = taskset_overall_stats[:-1] + "\n"
-        
-            with open("./log/" + tasksetsize + "-full.csv", "w") as taskset_stats_full:
-                taskset_stats_full.write(tasksetstats_text_full)
-            with open("./log/" + tasksetsize + "-full.dat", "w") as taskset_stats_full:
-                taskset_stats_full.write(tasksetstats_text_full.replace(";", " "))
-
-            with open("./log/" + tasksetsize + ".csv", "w") as taskset_stats:
-                taskset_stats.write(tasksetstats_text)
-            with open("./log/" + tasksetsize + ".dat", "w") as taskset_stats:
-                taskset_stats.write(tasksetstats_text.replace(";", " "))
+            if stats_overall_csv_full == True or stats_overall_dat_full == True:
+                taskset_overall_stats_full = taskset_overall_stats_full[:-1] + "\n"
+                
+            if stats_overall_csv == True or stats_overall_dat == True:
+                taskset_overall_stats = taskset_overall_stats[:-1] + "\n"
     
     # now we write final data to resultfiles - overall
-    with open("./log/summary-full.csv", "w") as perffile:
-        perffile.write(taskset_overall_stats_full)
-    with open("./log/summary-full.dat", "w") as perffile:
-        perffile.write(taskset_overall_stats_full.replace(";", " "))
+    if stats_overall_csv_full == True or stats_overall_dat_full == True:
+        if stats_overall_csv_full == True:
+            with open("./log/summary-full.csv", "w") as perffile:
+                perffile.write(taskset_overall_stats_full)
+        if stats_overall_dat_full == True:
+            with open("./log/summary-full.dat", "w") as perffile:
+                perffile.write(taskset_overall_stats_full.replace(";", " "))
         
-    with open("./log/summary.csv", "w") as perffile:
-        perffile.write(taskset_overall_stats)
-    with open("./log/summary.dat", "w") as perffile:
-        perffile.write(taskset_overall_stats.replace(";", " "))
+    if stats_overall_csv == True or stats_overall_dat == True:
+        if stats_overall_csv == True:
+            with open("./log/summary.csv", "w") as perffile:
+                perffile.write(taskset_overall_stats)
+        if stats_overall_dat == True:
+            with open("./log/summary.dat", "w") as perffile:
+                perffile.write(taskset_overall_stats.replace(";", " "))
     
 # help text
 def printHelp():
