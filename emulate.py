@@ -22,7 +22,10 @@ emulators = [["freertos_list", "freertos_boi"]]
 runs_emulation_per_set = 10
 
 # how many threads should be used for emulation
-number_of_threads = 10
+number_of_threads_emulation = 10
+
+# how many threads should be used for stats creation
+number_of_threads_stats = 5
 
 # compress logs on creation / read compressed logs on stats generation
 log_compress = True
@@ -94,7 +97,7 @@ def runEmulations():
                                 command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " | gzip > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log.gz"
                             else:
                                 command = "./bin/" + emulator + " 1 " + tasksetpath + "/" + tasksetfile + " > log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + "-" + str(run) + ".log"
-                            while len(threads) >= number_of_threads: 
+                            while len(threads) >= number_of_threads_emulation: 
                                 for i in range(0, len(threads)):
                                     if threads[i].is_alive() == False:
                                         threads[i].join()
@@ -118,12 +121,10 @@ def runEmulations():
         time.sleep(0.01)    
         
 # function for single gathering thread
-def gatherThread(threadid, emulator, tasksetsize, tasksetpath, queue):
+def gatherThread(threadid, setstotal, counter_queue, counter_queue_lock, emulator, tasksetsize, tasksetpath, queue):
     # add list for specific setsize to fulldata sublist of given emulator
     emulatordatasetsizelist = { 'sizes': {}, 'ids': {}, 'inserts': {}, 'time_total': {}, 'time_perinsert_mean': {}, 'time_perinsert_min': {}, 'time_perinsert_max': {}, 'time_perinsert_stdev': {}, 'time_perinsert_err': {}  }
 
-    filenumber = 1
-    totalfiles = len(os.listdir(tasksetpath))
     for tasksetfile in os.listdir(tasksetpath):
         if stats_per_set_csv == True or stats_per_set_dat == True:
             taskset_per_emulator_run_stats = "size;id;run;inserts;time_total;time_perinsert_mean;time_perinsert_min;time_perinsert_max;time_perinsert_stdev;time_perinsert_err\n"
@@ -252,8 +253,12 @@ def gatherThread(threadid, emulator, tasksetsize, tasksetpath, queue):
             with open("./log/" + tasksetsize + "/" + tasksetfile + "-" + emulator + ".dat", "w") as perffiletaskset_per_emulator_run:
                 perffiletaskset_per_emulator_run.write(taskset_per_emulator_run_stats.replace(";", " "))
                 
-        print("Thread " + str(threadid) + " processed " + emulator + "/" + tasksetsize + "/" + tasksetfile + " (" + str(filenumber) + " of " + str(totalfiles) + ")")        
-        filenumber += 1
+        # print status
+        counter_queue_lock.acquire()
+        currentset = int(counter_queue.get())
+        counter_queue.put(currentset + 1)
+        counter_queue_lock.release()
+        print("Thread " + str(threadid) + " processed " + emulator + "/" + tasksetsize + "/" + str(tasksetid) + " (" + str(currentset + 1) + " of " + str(setstotal) + " - " + str(round(((currentset + 1) / float(setstotal)) * 100, 2)) + "%)")        
             
     queueitem = { "emulator" : str(emulator), "tasksetsize" : str(tasksetsize), "data" : emulatordatasetsizelist}
     queue.put(queueitem)
@@ -330,9 +335,28 @@ def gatherStatistics():
     taskset_overall_stats += statsheader
 
     # threaded collection of all stats
-    threadid = 1
+    threadid = 0
     threads = list()
+    
+    # queue for results
     gatherqueue = queue.Queue()
+    
+    # queue and semaphore for jobcounter
+    counter_queue_lock = threading.Semaphore()
+    counter_queue = queue.Queue()
+    counter_queue.put(0)
+    setstotal = 0
+    
+    # count total sets
+    for tasksetsize_item in os.walk("tasksets"):   
+        tasksetpath = tasksetsize_item[0]             
+        if(tasksetpath != "tasksets"):
+            tasksetsize = tasksetpath.split("/")[1]
+            for emulatorclass in emulators:
+                for emulator in emulatorclass:
+                    setstotal += len(os.listdir(tasksetpath))
+                
+    
     for tasksetsize_item in os.walk("tasksets"):   
         tasksetpath = tasksetsize_item[0]             
         if(tasksetpath != "tasksets"):
@@ -340,7 +364,15 @@ def gatherStatistics():
             for emulatorclass in emulators:
                 for emulator in emulatorclass:
                     # here we do threading
-                    thread = threading.Thread(target=gatherThread, args=(threadid, emulator, tasksetsize, tasksetpath, gatherqueue,))
+                    while len(threads) >= number_of_threads_stats: 
+                        for i in range(0, len(threads)):
+                            if threads[i].is_alive() == False:
+                                threads[i].join()
+                                threads.pop(i)
+                                break
+                        time.sleep(0.01)
+                                
+                    thread = threading.Thread(target=gatherThread, args=(threadid, setstotal, counter_queue, counter_queue_lock, emulator, tasksetsize, tasksetpath, gatherqueue,))
                     thread.start()
                     threads.append(thread)
                     threadid += 1
