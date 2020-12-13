@@ -39,8 +39,8 @@ stats_per_set_csv = False
 stats_per_set_dat = False
 
 # create statistics per taskset-size
-stats_per_size_csv = False
-stats_per_size_dat = False
+stats_per_size_csv = True
+stats_per_size_dat = True
 
 # create statistics per taskset-size (all available data)
 stats_per_size_csv_full = False
